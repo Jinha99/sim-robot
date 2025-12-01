@@ -301,7 +301,7 @@ class MAPPOAgent:
             'critic_optimizer': self.critic_optimizer.state_dict()
         }, path)
         print(f"모델 저장: {path}")
-    
+
     def load(self, path):
         """모델 로드"""
         checkpoint = torch.load(path)
@@ -310,4 +310,3 @@ class MAPPOAgent:
         self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
         self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
         print(f"모델 로드: {path}")
-
