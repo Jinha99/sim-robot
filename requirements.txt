@@ -1,0 +1,12 @@
+# Worm Robot Simulation - Required Packages
+
+# Deep Learning Framework
+torch>=2.0.0
+
+# Numerical Computing
+numpy>=1.24.0
+
+# Visualization and Logging
+tensorboard>=2.13.0
+# matplotlib>=3.7.0
+
