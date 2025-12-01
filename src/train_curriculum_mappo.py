@@ -194,11 +194,15 @@ class MAPPOCurriculumTrainer:
                 action, log_prob, value = self.agent.get_action(state, training=True)
                 actions[rid], log_probs[rid], values[rid] = action, log_prob, value
             
-            _, _, done, status = system.step(actions)
+            _, collision_rewards, done, status = system.step(actions)
 
             step_total_reward = 0.0
             for rid in current_states.keys():
-                robot_reward = -10.0  # 스텝 페널티 대폭 강화
+                # 충돌 패널티 추가 (같은 칸으로 이동 시도)
+                robot_reward = collision_rewards.get(rid, 0.0)
+
+                # 스텝 페널티 대폭 강화
+                robot_reward += -10.0
                 
                 head_pos = system.environment.state.robot_positions[rid]["head"]
                 min_dist_to_target = min([abs(head_pos[0] - tx) + abs(head_pos[1] - ty) for tx, ty in target_positions])
