@@ -242,8 +242,8 @@ class MAPPOCurriculumTrainer:
                 log_probs[rid] = log_prob
                 values[rid] = value
 
-            # 스텝 실행
-            observations, _, done, status = system.step(actions) # 기존 rewards 변수는 사용 안함
+            # 스텝 실행 (충돌 패널티 포함)
+            observations, collision_rewards, done, status = system.step(actions)
             # 🔹 현재 각 로봇의 head 위치와, 타겟 셀 점령 개수 계산
             heads = {
                 rid: system.environment.state.robot_positions[rid]["head"]
@@ -263,6 +263,9 @@ class MAPPOCurriculumTrainer:
             step_total_reward = 0.0
             for rid in current_states.keys():
                 robot_reward = 0.0
+
+                # 0. 충돌 패널티 추가 (같은 칸으로 이동 시도)
+                robot_reward += collision_rewards.get(rid, 0.0)
 
                 # 1. 스텝마다 작은 페널티 (최소 스텝 유도)
                 robot_reward -= 1.0

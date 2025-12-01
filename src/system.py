@@ -119,37 +119,41 @@ class WormRobotSystem(CoupledDEVS):
     
     def step(self, actions):
         """
-        한 스텝 실행 (RL 학습용) with Invalid Action Masking
-        
+        한 스텝 실행 (RL 학습용) with Invalid Action Masking & Collision Detection
+
         Args:
             actions: {robot_id: action_idx} - 각 로봇의 행동
-        
+
         Returns:
             observations: 다음 관찰
-            rewards: {robot_id: reward} - 각 로봇의 보상
+            rewards: {robot_id: reward} - 각 로봇의 보상 (충돌 패널티 포함)
             done: 에피소드 종료 여부
             status: 게임 상태 (STATUS_WIN, STATUS_FAIL, STATUS_RUNNING)
         """
         import random
-        
-        # 각 로봇 행동 실행
-        updates = []
+        from collections import defaultdict
+
+        # 각 로봇의 의도된 이동 계산
+        intended_updates = []
+        original_positions = {}
+
         for robot_id, action_idx in actions.items():
             robot_model = self.robots[robot_id]
             current_pos = self.environment.state.robot_positions[robot_id]
-            
-            # 현재 상태
+
+            # 현재 상태 저장
             direction = current_pos["direction"]
             head = current_pos["head"]
             tail = current_pos["tail"]
-            
+            original_positions[robot_id] = {"head": head, "tail": tail, "direction": direction}
+
             # Invalid Action Masking: 유효한 action인지 체크
             valid_actions = self._get_valid_actions(robot_id, head, tail, direction)
-            
+
             if action_idx not in valid_actions:
                 # Invalid action이면 랜덤하게 valid action 선택
                 action_idx = random.choice(valid_actions) if valid_actions else 1  # 회전은 항상 안전
-            
+
             # Action에 따라 새로운 위치 계산
             if action_idx == 0:  # FORWARD
                 new_direction = direction
@@ -173,28 +177,98 @@ class WormRobotSystem(CoupledDEVS):
                 new_direction = direction
                 new_head = head
                 new_tail = tail
-            
-            updates.append({
+
+            intended_updates.append({
                 "robot_id": robot_id,
                 "head": new_head,
                 "tail": new_tail,
-                "direction": new_direction
+                "direction": new_direction,
+                "action_idx": action_idx
             })
-        
+
+        # 🔍 동일 칸 충돌 감지
+        collision_penalties = {}
+        head_positions = defaultdict(list)  # {position: [robot_ids]}
+        tail_positions = defaultdict(list)
+
+        # 각 로봇이 이동하려는 위치 수집
+        for update in intended_updates:
+            robot_id = update["robot_id"]
+            head_positions[update["head"]].append(robot_id)
+            tail_positions[update["tail"]].append(robot_id)
+
+        # 충돌 감지: head끼리, head-tail, tail끼리 모두 체크
+        blocked_robots = set()
+
+        # 1. Head 위치 충돌 검사
+        for pos, robot_ids in head_positions.items():
+            if len(robot_ids) > 1:
+                # 여러 로봇이 같은 head 위치로 이동하려 함
+                blocked_robots.update(robot_ids)
+                for rid in robot_ids:
+                    collision_penalties[rid] = -50.0  # 충돌 패널티
+
+        # 2. Head-Tail 교차 충돌 검사
+        for pos in head_positions.keys():
+            if pos in tail_positions and len(head_positions[pos]) > 0 and len(tail_positions[pos]) > 0:
+                # 한 로봇의 head와 다른 로봇의 tail이 같은 위치
+                head_robots = head_positions[pos]
+                tail_robots = tail_positions[pos]
+                # 다른 로봇끼리만 충돌로 판정
+                for hrid in head_robots:
+                    for trid in tail_robots:
+                        if hrid != trid:
+                            blocked_robots.add(hrid)
+                            blocked_robots.add(trid)
+                            collision_penalties[hrid] = -50.0
+                            collision_penalties[trid] = -50.0
+
+        # 3. Tail 위치 충돌 검사
+        for pos, robot_ids in tail_positions.items():
+            if len(robot_ids) > 1:
+                # 여러 로봇이 같은 tail 위치로 이동하려 함
+                blocked_robots.update(robot_ids)
+                for rid in robot_ids:
+                    collision_penalties[rid] = -50.0  # 충돌 패널티
+
+        # 🚫 충돌한 로봇은 이동 취소 (원래 위치 유지)
+        final_updates = []
+        for update in intended_updates:
+            robot_id = update["robot_id"]
+            if robot_id in blocked_robots:
+                # 충돌! 원래 위치로 되돌림
+                original = original_positions[robot_id]
+                final_updates.append({
+                    "robot_id": robot_id,
+                    "head": original["head"],
+                    "tail": original["tail"],
+                    "direction": original["direction"]
+                })
+            else:
+                # 충돌 없음, 정상 이동
+                final_updates.append({
+                    "robot_id": robot_id,
+                    "head": update["head"],
+                    "tail": update["tail"],
+                    "direction": update["direction"]
+                })
+
         # Environment 업데이트
-        self.environment.state.pending_updates = updates
+        self.environment.state.pending_updates = final_updates
         self.environment._update_environment()
-        
+
         # 결과 수집
         observations = self.environment._generate_observations()
         status = self.environment.state.status
         done = (status != config.STATUS_RUNNING)
 
-        dummy_rewards = {
-            rid: 0.0 for rid in self.environment.state.robot_positions.keys()
+        # 충돌 패널티를 포함한 rewards 반환
+        rewards = {
+            rid: collision_penalties.get(rid, 0.0)
+            for rid in self.environment.state.robot_positions.keys()
         }
 
-        return observations, dummy_rewards, done, status
+        return observations, rewards, done, status
     
     def _get_valid_actions(self, robot_id, head, tail, direction):
         """
